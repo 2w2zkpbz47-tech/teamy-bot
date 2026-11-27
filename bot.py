@@ -3,12 +3,12 @@ import discord
 from discord.ext import commands
 import config
 import os
+import asyncio
 
 from utils.database import init_db
 
 
 class Teamy(commands.Bot):
-
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -24,19 +24,15 @@ class Teamy(commands.Bot):
     async def setup_hook(self):
         await init_db()
 
-        print("========== TEAMY COG LOADER ==========")
-
         for filename in sorted(os.listdir("./cogs")):
             if filename.endswith(".py") and not filename.startswith("_"):
                 extension = f"cogs.{filename[:-3]}"
 
                 try:
                     await self.load_extension(extension)
-                    print(f"✅ Loaded {extension}")
+                    print(f"Loaded {extension}")
                 except Exception as error:
-                    print(f"❌ Failed {extension}: {error}")
-
-        print("======================================")
+                    print(f"Failed {extension}: {error}")
 
         try:
             if config.GUILD_ID:
@@ -46,14 +42,14 @@ class Teamy(commands.Bot):
             else:
                 synced = await self.tree.sync()
 
-            print(f"✅ Registered {len(synced)} slash commands")
+            print(f"Registered {len(synced)} slash commands")
 
         except Exception as error:
-            print(f"❌ Command sync failed: {error}")
+            print(f"Command sync failed: {error}")
 
     async def on_ready(self):
-        print(f"✅ Logged in as {self.user} (ID: {self.user.id})")
-        print(f"✅ Connected to {len(self.guilds)} servers")
+        print(f"Logged in as {self.user}")
+        print(f"Connected to {len(self.guilds)} servers")
 
 
 bot = Teamy()
@@ -65,5 +61,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
