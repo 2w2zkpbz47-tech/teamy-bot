@@ -147,57 +147,33 @@ class SetupWizard(commands.Cog):
                 @discord.ui.button(label="➡️ Do this later", style=discord.ButtonStyle.secondary)
                 async def skip3(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 4
-                    await self.update_content(interaction)
-                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
-                async def back3(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    self.step = 2
-                    await self.update_content(interaction)
-            return embed, Step3View
+                                await self.update_content(interaction)
 
-        elif step == 4:
-            embed = discord.Embed(
-                title="Step 4 — Create Channels Automatically",
-                description=(
-                    "I can create a full channel structure:\n\n"
-                    "INFORMATION — Rules, Announcements, Welcome\n"
-                    "COMMUNITY — Chat, Introductions, Suggestions\n"
-                    "SUPPORT — Ticket Panel\n"
-                    "STAFF AREA — Logs, Dashboard (Staff Only)\n"
-                    "VOICE CHANNELS — General, Gaming\n\n"
-                    "Would you like me to create these now?"
-                ),
-                color=discord.Color.teal()
-            )
-            class Step4View(SetupWizardView):
-                @discord.ui.button(label="📂 Create Channels Now", style=discord.ButtonStyle.green)
-                async def makechans(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    await interaction.response.send_message(
-                        "✅ Run /setup-server to create all channels automatically!",
-                        ephemeral=True
-                    )
-                    self.step = 5
-                    await self.update_content(interaction)
-                @discord.ui.button(label="➡️ I'll do this manually", style=discord.ButtonStyle.secondary)
-                async def skip4(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    self.step = 5
-                    await self.update_content(interaction)
-                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
-                async def back4(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    self.step = 3
-                    await self.update_content(interaction)
-            return embed, Step4View        
-                 elif step == 5:
+        @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
+        async def skip4(self, interaction: discord.Interaction):
+            self.step = 5
+            await self.update_content(interaction)
+
+        @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
+        async def back4(self, interaction: discord.Interaction):
+            self.step = 3
+            await self.update_content(interaction)
+
+            return embed, Step4View
+
+        elif step == 5:
             embed = discord.Embed(
                 title="Step 5 — Set Up Log Channels",
                 description=(
                     "Where should I log events?\n\n"
                     "Run these commands when ready:\n"
-                    "/setup channels mod-logs #mod-logs\n"
-                    "/setup channels ticket-logs #ticket-logs\n"
-                    "/setup channels automod-logs #automod-logs"
+                    "/setup channels mod-logs #your-channel\n"
+                    "/setup channels ticket-logs #your-channel\n"
+                    "/setup channels automod-logs #your-channel"
                 ),
-                color=discord.Color.purple()
+                color=discord.Color.blue()
             )
+            embed.set_footer(text="Use /help setup for more info")
             class Step5View(SetupWizardView):
                 @discord.ui.button(label="✅ Log Channels Set!", style=discord.ButtonStyle.green)
                 async def done5(self, interaction: discord.Interaction, button: discord.ui.Button):
