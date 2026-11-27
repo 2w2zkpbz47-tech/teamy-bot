@@ -292,9 +292,9 @@ class SetupWizard(commands.Cog):
                 async def back8(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 7
                     await self.update_content(interaction)
-            return embed, Step8View
+                return embed, Step8View
 
-        elif step == 9:
+            elif step == 9:
             embed = discord.Embed(
                 title="🎉 Setup Complete!",
                 description=(
