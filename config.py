@@ -1,0 +1,25 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID") or 0)
+
+# Bot Settings
+TEAM_SIZE = 4
+MATCH_TIMEOUT = 120
+DATABASE = "teamy.db"
+
+# Colors
+COLOR_PRIMARY   = 0x5865F2
+COLOR_SUCCESS   = 0x57F287
+COLOR_ERROR     = 0xED4245
+COLOR_WARN      = 0xFEE75C
+COLOR_TEAM      = 0xEB459E
+COLOR_TOKEN     = 0xFEE75C
+COLOR_LEVEL     = 0x9B59B6
+COLOR_GIVEAWAY  = 0xF1C40F
+COLOR_TICKET    = 0x3498DB
+COLOR_STAFF     = 0xE67E22
+COLOR_INFO      = 0x95A5A6
