@@ -33,7 +33,7 @@ class StaffPerformance(commands.Cog):
     async def check_access(self, interaction):
         if interaction.guild is None:
             await interaction.response.send_message(
-                "This command can only be used in a server.",
+                "This command can only be used inside a server.",
                 ephemeral=True
             )
             return False
@@ -47,6 +47,66 @@ class StaffPerformance(commands.Cog):
 
         return True
 
+    async def get_stats(self, guild_id, user_id):
+        async with aiosqlite.connect(config.DATABASE) as db:
+            async def count(query, parameters):
+                async with db.execute(query, parameters) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else 0
+
+            claimed = await count("""
+                SELECT COUNT(*) FROM tickets
+                WHERE guild_id = ? AND claimed_by = ?
+            """, (guild_id, user_id))
+
+            closed = await count("""
+                SELECT COUNT(*) FROM tickets
+                WHERE guild_id = ? AND claimed_by = ? AND closed = 1
+            """, (guild_id, user_id))
+
+            open_claims = await count("""
+                SELECT COUNT(*) FROM tickets
+                WHERE guild_id = ? AND claimed_by = ? AND closed = 0
+            """, (guild_id, user_id))
+
+            submitted = await count("""
+                SELECT COUNT(*) FROM staff_requests
+                WHERE guild_id = ? AND requester_id = ?
+            """, (guild_id, user_id))
+
+            approved = await count("""
+                SELECT COUNT(*) FROM staff_requests
+                WHERE guild_id = ? AND requester_id = ?
+                AND status = 'approved'
+            """, (guild_id, user_id))
+
+            pending = await count("""
+                SELECT COUNT(*) FROM staff_requests
+                WHERE guild_id = ? AND requester_id = ?
+                AND status = 'pending'
+            """, (guild_id, user_id))
+
+            strikes_issued = await count("""
+                SELECT COUNT(*) FROM staff_strikes
+                WHERE guild_id = ? AND issued_by = ?
+            """, (guild_id, user_id))
+
+            notes_added = await count("""
+                SELECT COUNT(*) FROM division_notes
+                WHERE guild_id = ? AND added_by = ?
+            """, (guild_id, user_id))
+
+        return {
+            "claimed": claimed,
+            "closed": closed,
+            "open": open_claims,
+            "submitted": submitted,
+            "approved": approved,
+            "pending": pending,
+            "strikes": strikes_issued,
+            "notes": notes_added
+        }
+
     @staffperformance.command(
         name="member",
         description="View an individual staff member's performance."
@@ -59,47 +119,10 @@ class StaffPerformance(commands.Cog):
         if not await self.check_access(interaction):
             return
 
-        guild_id = interaction.guild.id
-        user_id = staff_member.id
-
-        async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT tickets_handled
-                FROM member_stats
-                WHERE guild_id = ? AND user_id = ?
-            """, (guild_id, user_id)) as cursor:
-                stats = await cursor.fetchone()
-
-            async with db.execute("""
-                SELECT COUNT(*)
-                FROM staff_requests
-                WHERE guild_id = ? AND requester_id = ?
-            """, (guild_id, user_id)) as cursor:
-                submitted = (await cursor.fetchone())[0]
-
-            async with db.execute("""
-                SELECT COUNT(*)
-                FROM staff_requests
-                WHERE guild_id = ? AND target_id = ?
-                AND status = 'approved'
-            """, (guild_id, user_id)) as cursor:
-                approved_actions = (await cursor.fetchone())[0]
-
-            async with db.execute("""
-                SELECT COUNT(*)
-                FROM staff_strikes
-                WHERE guild_id = ? AND user_id = ?
-            """, (guild_id, user_id)) as cursor:
-                strikes = (await cursor.fetchone())[0]
-
-            async with db.execute("""
-                SELECT COUNT(*)
-                FROM division_notes
-                WHERE guild_id = ? AND user_id = ?
-            """, (guild_id, user_id)) as cursor:
-                notes = (await cursor.fetchone())[0]
-
-        ticket_claims = stats[0] if stats else 0
+        stats = await self.get_stats(
+            interaction.guild.id,
+            staff_member.id
+        )
 
         embed = discord.Embed(
             title="Teamy | Staff Performance",
@@ -110,28 +133,43 @@ class StaffPerformance(commands.Cog):
         embed.set_thumbnail(url=staff_member.display_avatar.url)
 
         embed.add_field(
-            name="🎫 Recorded Ticket Claims",
-            value=str(ticket_claims),
+            name="🎫 Tickets Claimed",
+            value=str(stats["claimed"]),
+            inline=True
+        )
+        embed.add_field(
+            name="🔒 Claimed Tickets Closed",
+            value=str(stats["closed"]),
+            inline=True
+        )
+        embed.add_field(
+            name="⏳ Open Claimed Tickets",
+            value=str(stats["open"]),
             inline=True
         )
         embed.add_field(
             name="📋 Requests Submitted",
-            value=str(submitted),
+            value=str(stats["submitted"]),
             inline=True
         )
         embed.add_field(
-            name="✅ Approved Staff Actions",
-            value=str(approved_actions),
+            name="✅ Requests Approved",
+            value=str(stats["approved"]),
             inline=True
         )
         embed.add_field(
-            name="⚠️ Strikes",
-            value=str(strikes),
+            name="⌛ Requests Pending",
+            value=str(stats["pending"]),
             inline=True
         )
         embed.add_field(
-            name="📝 Staff Notes",
-            value=str(notes),
+            name="⚠️ Strikes Issued",
+            value=str(stats["strikes"]),
+            inline=True
+        )
+        embed.add_field(
+            name="📝 Notes Added",
+            value=str(stats["notes"]),
             inline=True
         )
 
@@ -154,17 +192,18 @@ class StaffPerformance(commands.Cog):
 
         async with aiosqlite.connect(config.DATABASE) as db:
             async with db.execute("""
-                SELECT user_id, tickets_handled
-                FROM member_stats
-                WHERE guild_id = ? AND tickets_handled > 0
-                ORDER BY tickets_handled DESC
+                SELECT claimed_by, COUNT(*)
+                FROM tickets
+                WHERE guild_id = ? AND claimed_by IS NOT NULL
+                GROUP BY claimed_by
+                ORDER BY COUNT(*) DESC
                 LIMIT 10
             """, (interaction.guild.id,)) as cursor:
                 rows = await cursor.fetchall()
 
         embed = discord.Embed(
             title="🏆 Teamy Staff Activity Leaderboard",
-            description="Top recorded ticket-claim activity.",
+            description="Ranked by recorded ticket claims.",
             colour=discord.Colour.gold()
         )
 
@@ -174,11 +213,14 @@ class StaffPerformance(commands.Cog):
             lines = []
 
             for position, (user_id, claims) in enumerate(rows, start=1):
-                member = interaction.guild.get_member(user_id)
-                name = member.mention if member else f"`{user_id}`"
+                staff_member = interaction.guild.get_member(user_id)
+                name = (
+                    staff_member.mention
+                    if staff_member else f"`{user_id}`"
+                )
 
                 lines.append(
-                    f"**#{position}** {name} — **{claims}** recorded claims"
+                    f"**#{position}** {name} — **{claims}** claims"
                 )
 
             embed.description = "\n".join(lines)
