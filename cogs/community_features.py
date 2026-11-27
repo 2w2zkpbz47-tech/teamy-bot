@@ -5,6 +5,7 @@ from discord.ext import commands
 import aiosqlite
 import config
 import re
+import time
 
 
 class CommunityFeatures(commands.Cog):
@@ -16,23 +17,25 @@ class CommunityFeatures(commands.Cog):
     async def cog_load(self):
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.executescript("""
-                CREATE TABLE IF NOT EXISTS afk_users (
+                CREATE TABLE IF NOT EXISTS afk (
                     guild_id INTEGER,
                     user_id INTEGER,
                     reason TEXT,
+                    timestamp INTEGER,
                     PRIMARY KEY (guild_id, user_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS sticky_messages (
                     guild_id INTEGER,
                     channel_id INTEGER,
-                    message TEXT,
-                    last_message_id INTEGER,
+                    message_id INTEGER,
+                    content TEXT,
                     PRIMARY KEY (guild_id, channel_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS reaction_roles (
                     guild_id INTEGER,
+                    channel_id INTEGER,
                     message_id INTEGER,
                     emoji TEXT,
                     role_id INTEGER,
@@ -43,66 +46,116 @@ class CommunityFeatures(commands.Cog):
                     guild_id INTEGER,
                     trigger TEXT,
                     response TEXT,
-                    created_by INTEGER,
                     PRIMARY KEY (guild_id, trigger)
                 );
 
                 CREATE TABLE IF NOT EXISTS suggestions (
-                    suggestion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER,
+                    user_id INTEGER,
                     channel_id INTEGER,
                     message_id INTEGER,
-                    user_id INTEGER,
+                    thread_id INTEGER,
                     suggestion TEXT,
                     status TEXT DEFAULT 'pending',
-                    created_at REAL
+                    timestamp INTEGER
                 );
 
-                CREATE TABLE IF NOT EXISTS suggestion_votes (
-                    guild_id INTEGER,
-                    message_id INTEGER,
-                    user_id INTEGER,
-                    vote INTEGER,
-                    PRIMARY KEY (guild_id, message_id, user_id)
+                CREATE TABLE IF NOT EXISTS suggestion_config (
+                    guild_id INTEGER PRIMARY KEY,
+                    channel_id INTEGER
                 );
             """)
             await db.commit()
 
     # --------------------------------------------------
-    # AFK
+    # AFK SYSTEM
     # --------------------------------------------------
 
     @app_commands.command(name="afk", description="Set yourself as AFK")
-    @app_commands.guild_only()
-    async def afk(
-        self,
-        interaction: discord.Interaction,
-        reason: str = "AFK"
-    ):
+    async def afk(self, interaction: discord.Interaction, reason: str = "AFK"):
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.execute("""
-                INSERT OR REPLACE INTO afk_users
-                (guild_id, user_id, reason)
-                VALUES (?, ?, ?)
-            """, (interaction.guild_id, interaction.user.id, reason[:300]))
+                INSERT OR REPLACE INTO afk
+                (guild_id, user_id, reason, timestamp)
+                VALUES (?, ?, ?, ?)
+            """, (interaction.guild.id, interaction.user.id, reason, int(time.time())))
             await db.commit()
 
-        self.afk_users[(interaction.guild_id, interaction.user.id)] = reason
-
         await interaction.response.send_message(
-            f"💤 You're now AFK: **{reason}**",
+            f"💤 You are now AFK: **{reason}**",
             ephemeral=True
         )
 
-    async def remove_afk(self, member: discord.Member):
-        async with aiosqlite.connect(config.DATABASE) as db:
-            await db.execute("""
-                DELETE FROM afk_users
-                WHERE guild_id = ? AND user_id = ?
-            """, (member.guild.id, member.id))
-            await db.commit()
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot or not message.guild:
+            return
 
-        self.afk_users.pop((member.guild.id, member.id), None)
+        # Remove AFK when user speaks
+        async with aiosqlite.connect(config.DATABASE) as db:
+            cursor = await db.execute(
+                "SELECT reason FROM afk WHERE guild_id = ? AND user_id = ?",
+                (message.guild.id, message.author.id)
+            )
+            result = await cursor.fetchone()
+
+            if result:
+                await db.execute(
+                    "DELETE FROM afk WHERE guild_id = ? AND user_id = ?",
+                    (message.guild.id, message.author.id)
+                )
+                await db.commit()
+
+                await message.channel.send(
+                    f"👋 Welcome back {message.author.mention}! "
+                    f"You were AFK: **{result[0]}**"
+                )
+
+            # Check mentions
+            for member in message.mentions:
+                cursor = await db.execute(
+                    "SELECT reason, timestamp FROM afk WHERE guild_id = ? AND user_id = ?",
+                    (message.guild.id, member.id)
+                )
+                afk_data = await cursor.fetchone()
+
+                if afk_data:
+                    duration = int(time.time()) - afk_data[1]
+                    minutes = duration // 60
+
+                    await message.reply(
+                        f"💤 **{member.display_name}** is AFK: "
+                        f"{afk_data[0]} ({minutes} minutes)",
+                        mention_author=False
+                    )
+
+        # Custom commands
+        content = message.content.strip()
+
+        if content.startswith("!"):
+            trigger = content[1:].split(" ", 1)[0].lower()
+
+            async with aiosqlite.connect(config.DATABASE) as db:
+                cursor = await db.execute(
+                    "SELECT response FROM custom_commands "
+                    "WHERE guild_id = ? AND trigger = ?",
+                    (message.guild.id, trigger)
+                )
+                result = await cursor.fetchone()
+
+            if result:
+                response = result[0]
+                response = response.replace("{user}", message.author.mention)
+                response = response.replace("{server}", message.guild.name)
+
+                await message.channel.send(
+                    response,
+                    allowed_mentions=discord.AllowedMentions.none()
+                )
+
+        # Sticky messages
+        await self.check_sticky(message)
 
     # --------------------------------------------------
     # STICKY MESSAGES
@@ -118,40 +171,91 @@ class CommunityFeatures(commands.Cog):
     async def sticky_set(
         self,
         interaction: discord.Interaction,
-        channel: discord.TextChannel,
         message: str
     ):
+        channel = interaction.channel
+
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.execute("""
                 INSERT OR REPLACE INTO sticky_messages
-                (guild_id, channel_id, message, last_message_id)
-                VALUES (?, ?, ?, NULL)
-            """, (interaction.guild_id, channel.id, message[:1900]))
+                (guild_id, channel_id, message_id, content)
+                VALUES (?, ?, ?, ?)
+            """, (interaction.guild.id, channel.id, 0, message))
             await db.commit()
 
-        await interaction.response.send_message(
-            f"Sticky message configured for {channel.mention}.",
-            ephemeral=True
-        )
+        sticky_message = await channel.send(message)
 
-    @sticky.command(name="remove", description="Remove a sticky message")
-    @app_commands.checks.has_permissions(manage_messages=True)
-    async def sticky_remove(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel
-    ):
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.execute("""
-                DELETE FROM sticky_messages
+                UPDATE sticky_messages
+                SET message_id = ?
                 WHERE guild_id = ? AND channel_id = ?
-            """, (interaction.guild_id, channel.id))
+            """, (sticky_message.id, interaction.guild.id, channel.id))
             await db.commit()
 
         await interaction.response.send_message(
-            f"Sticky message removed from {channel.mention}.",
+            "📌 Sticky message has been set!",
             ephemeral=True
         )
+
+    @sticky.command(name="remove", description="Remove the sticky message")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def sticky_remove(self, interaction: discord.Interaction):
+        async with aiosqlite.connect(config.DATABASE) as db:
+            await db.execute(
+                "DELETE FROM sticky_messages WHERE guild_id = ? AND channel_id = ?",
+                (interaction.guild.id, interaction.channel.id)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            "🗑️ Sticky message removed.",
+            ephemeral=True
+        )
+
+    async def check_sticky(self, message):
+        if message.author.bot:
+            return
+
+        async with aiosqlite.connect(config.DATABASE) as db:
+            cursor = await db.execute(
+                "SELECT message_id, content FROM sticky_messages "
+                "WHERE guild_id = ? AND channel_id = ?",
+                (message.guild.id, message.channel.id)
+            )
+            result = await cursor.fetchone()
+
+        if not result:
+            return
+
+        old_message_id, content = result
+
+        # Only repost after five human messages
+        key = (message.guild.id, message.channel.id)
+        self.sticky_cache[key] = self.sticky_cache.get(key, 0) + 1
+
+        if self.sticky_cache[key] < 5:
+            return
+
+        self.sticky_cache[key] = 0
+
+        # Delete old sticky message if possible
+        if old_message_id:
+            try:
+                old_message = await message.channel.fetch_message(old_message_id)
+                await old_message.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+
+        new_message = await message.channel.send(content)
+
+        async with aiosqlite.connect(config.DATABASE) as db:
+            await db.execute(
+                "UPDATE sticky_messages SET message_id = ? "
+                "WHERE guild_id = ? AND channel_id = ?",
+                (new_message.id, message.guild.id, message.channel.id)
+            )
+            await db.commit()
 
     # --------------------------------------------------
     # REACTION ROLES
@@ -159,7 +263,7 @@ class CommunityFeatures(commands.Cog):
 
     reactionrole = app_commands.Group(
         name="reactionrole",
-        description="Configure reaction roles"
+        description="Manage reaction roles"
     )
 
     @reactionrole.command(name="add", description="Add a reaction role")
@@ -172,44 +276,38 @@ class CommunityFeatures(commands.Cog):
         role: discord.Role
     ):
         try:
-            mid = int(message_id)
-        except ValueError:
-            return await interaction.response.send_message(
-                "Message ID must be numeric.",
-                ephemeral=True
-            )
-
-        if role >= interaction.guild.me.top_role:
-            return await interaction.response.send_message(
-                "My highest role must be above that role.",
-                ephemeral=True
-            )
-
-        try:
-            channel = interaction.channel
-            message = await channel.fetch_message(mid)
+            msg_id = int(message_id)
+            message = await interaction.channel.fetch_message(msg_id)
             await message.add_reaction(emoji)
-        except discord.NotFound:
-            return await interaction.response.send_message(
-                "I couldn't find that message in this channel.",
+        except (ValueError, discord.NotFound):
+            await interaction.response.send_message(
+                "❌ Invalid message ID or message not found.",
                 ephemeral=True
             )
+            return
         except discord.HTTPException:
-            return await interaction.response.send_message(
-                "I couldn't add that reaction. Check the emoji.",
+            await interaction.response.send_message(
+                "❌ I couldn't add that reaction. Check the emoji.",
                 ephemeral=True
             )
+            return
 
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.execute("""
                 INSERT OR REPLACE INTO reaction_roles
-                (guild_id, message_id, emoji, role_id)
-                VALUES (?, ?, ?, ?)
-            """, (interaction.guild_id, mid, emoji, role.id))
+                (guild_id, channel_id, message_id, emoji, role_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                interaction.guild.id,
+                interaction.channel.id,
+                msg_id,
+                str(emoji),
+                role.id
+            ))
             await db.commit()
 
         await interaction.response.send_message(
-            f"Reaction role configured: {emoji} → {role.mention}",
+            f"✅ Reaction role configured: {emoji} → {role.mention}",
             ephemeral=True
         )
 
@@ -221,113 +319,102 @@ class CommunityFeatures(commands.Cog):
         message_id: str,
         emoji: str
     ):
-        try:
-            mid = int(message_id)
-        except ValueError:
-            return await interaction.response.send_message(
-                "Message ID must be numeric.",
-                ephemeral=True
-            )
-
         async with aiosqlite.connect(config.DATABASE) as db:
-            await db.execute("""
-                DELETE FROM reaction_roles
-                WHERE guild_id = ? AND message_id = ? AND emoji = ?
-            """, (interaction.guild_id, mid, emoji))
+            await db.execute(
+                "DELETE FROM reaction_roles "
+                "WHERE guild_id = ? AND message_id = ? AND emoji = ?",
+                (interaction.guild.id, int(message_id), str(emoji))
+            )
             await db.commit()
 
         await interaction.response.send_message(
-            "Reaction role configuration removed.",
+            "🗑️ Reaction role removed.",
             ephemeral=True
         )
 
     @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        if payload.guild_id is None or payload.member is None:
+    async def on_raw_reaction_add(self, payload):
+        if payload.member is None or payload.member.bot:
             return
-
-        if payload.member.bot:
-            return
-
-        emoji = str(payload.emoji)
 
         async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT role_id FROM reaction_roles
-                WHERE guild_id = ? AND message_id = ? AND emoji = ?
-            """, (payload.guild_id, payload.message_id, emoji)) as cursor:
-                row = await cursor.fetchone()
+            cursor = await db.execute(
+                "SELECT role_id FROM reaction_roles "
+                "WHERE guild_id = ? AND message_id = ? AND emoji = ?",
+                (payload.guild_id, payload.message_id, str(payload.emoji))
+            )
+            result = await cursor.fetchone()
 
-        if not row:
-            return
-
-        role = payload.member.guild.get_role(row[0])
-        if role:
-            try:
-                await payload.member.add_roles(role, reason="Reaction role")
-            except discord.HTTPException:
-                pass
-
-    @commands.Cog.listener()
-    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
-        if payload.guild_id is None:
+        if not result:
             return
 
         guild = self.bot.get_guild(payload.guild_id)
-        if guild is None:
+        if not guild:
+            return
+
+        role = guild.get_role(result[0])
+        if role:
+            try:
+                await payload.member.add_roles(role, reason="Reaction role")
+            except discord.Forbidden:
+                pass
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload):
+        if payload.member and payload.member.bot:
+            return
+
+        async with aiosqlite.connect(config.DATABASE) as db:
+            cursor = await db.execute(
+                "SELECT role_id FROM reaction_roles "
+                "WHERE guild_id = ? AND message_id = ? AND emoji = ?",
+                (payload.guild_id, payload.message_id, str(payload.emoji))
+            )
+            result = await cursor.fetchone()
+
+        if not result:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
             return
 
         member = guild.get_member(payload.user_id)
-        if member is None or member.bot:
-            return
+        role = guild.get_role(result[0])
 
-        emoji = str(payload.emoji)
-
-        async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT role_id FROM reaction_roles
-                WHERE guild_id = ? AND message_id = ? AND emoji = ?
-            """, (payload.guild_id, payload.message_id, emoji)) as cursor:
-                row = await cursor.fetchone()
-
-        if not row:
-            return
-
-        role = guild.get_role(row[0])
-        if role:
+        if member and role:
             try:
                 await member.remove_roles(role, reason="Reaction role removed")
-            except discord.HTTPException:
+            except discord.Forbidden:
                 pass
 
     # --------------------------------------------------
     # SELF ROLES
     # --------------------------------------------------
 
-    @app_commands.command(name="selfroles", description="Open the self-role menu")
-    @app_commands.guild_only()
+    @app_commands.command(name="selfroles", description="Choose your own roles")
     async def selfroles(self, interaction: discord.Interaction):
         roles = [
             role for role in interaction.guild.roles
-            if role.name.lower().startswith("self:")
+            if role.name.startswith("Self:")
+            and not role.is_default()
             and role < interaction.guild.me.top_role
         ]
 
         if not roles:
-            return await interaction.response.send_message(
-                "There are no self-assignable roles configured.\n"
-                "Create roles beginning with `Self:` to make them available.",
+            await interaction.response.send_message(
+                "No self-assignable roles are configured. "
+                "Create roles starting with `Self:`.",
                 ephemeral=True
             )
-
-        roles = roles[:25]
+            return
 
         options = [
             discord.SelectOption(
-                label=role.name[5:].strip()[:100],
+                label=role.name.replace("Self:", "").strip()[:100],
                 value=str(role.id)
             )
-            for role in roles
+            for role in roles[:25]
         ]
 
         class SelfRoleSelect(discord.ui.Select):
@@ -340,49 +427,49 @@ class CommunityFeatures(commands.Cog):
                 )
 
             async def callback(self, select_interaction):
-                selected = {int(value) for value in self.values}
+                selected_ids = [int(value) for value in self.values]
                 selected_roles = [
-                    role for role in roles if role.id in selected
+                    role for role in roles
+                    if role.id in selected_ids
                 ]
 
-                current = [
-                    role for role in roles
-                    if role in select_interaction.user.roles
+                current_roles = [
+                    role for role in interaction.user.roles
+                    if role in roles
                 ]
 
                 add_roles = [
                     role for role in selected_roles
-                    if role not in current
+                    if role not in current_roles
                 ]
 
                 remove_roles = [
-                    role for role in current
+                    role for role in current_roles
                     if role not in selected_roles
                 ]
 
                 try:
                     if add_roles:
-                        await select_interaction.user.add_roles(*add_roles)
+                        await interaction.user.add_roles(*add_roles)
 
                     if remove_roles:
-                        await select_interaction.user.remove_roles(*remove_roles)
+                        await interaction.user.remove_roles(*remove_roles)
 
-                except discord.HTTPException:
-                    return await select_interaction.response.send_message(
-                        "I couldn't update your roles. Check my permissions.",
+                    await select_interaction.response.send_message(
+                        "✅ Your roles have been updated!",
+                        ephemeral=True
+                    )
+                except discord.Forbidden:
+                    await select_interaction.response.send_message(
+                        "❌ I don't have permission to manage these roles.",
                         ephemeral=True
                     )
 
-                await select_interaction.response.send_message(
-                    "Your self-roles have been updated!",
-                    ephemeral=True
-                )
-
-        view = discord.ui.View(timeout=180)
+        view = discord.ui.View(timeout=120)
         view.add_item(SelfRoleSelect())
 
         await interaction.response.send_message(
-            "Select the roles you want. Unselect roles to remove them.",
+            "Select the roles you want:",
             view=view,
             ephemeral=True
         )
@@ -396,7 +483,7 @@ class CommunityFeatures(commands.Cog):
         description="Manage custom server commands"
     )
 
-    @custom.command(name="add", description="Create a custom text command")
+    @custom.command(name="add", description="Create a custom command")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def custom_add(
         self,
@@ -407,31 +494,27 @@ class CommunityFeatures(commands.Cog):
         trigger = trigger.lower().strip()
 
         if not re.fullmatch(r"[a-z0-9_-]{1,32}", trigger):
-            return await interaction.response.send_message(
-                "Trigger can only contain letters, numbers, underscores "
-                "and hyphens (maximum 32 characters).",
+            await interaction.response.send_message(
+                "❌ Trigger must contain only letters, numbers, "
+                "hyphens or underscores.",
                 ephemeral=True
             )
+            return
 
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.execute("""
                 INSERT OR REPLACE INTO custom_commands
-                (guild_id, trigger, response, created_by)
-                VALUES (?, ?, ?, ?)
-            """, (
-                interaction.guild_id,
-                trigger,
-                response[:1900],
-                interaction.user.id
-            ))
+                (guild_id, trigger, response)
+                VALUES (?, ?, ?)
+            """, (interaction.guild.id, trigger, response))
             await db.commit()
 
         await interaction.response.send_message(
-            f"Custom command `!{trigger}` created.",
+            f"✅ Custom command `!{trigger}` created!",
             ephemeral=True
         )
 
-    @custom.command(name="remove", description="Delete a custom command")
+    @custom.command(name="remove", description="Remove a custom command")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def custom_remove(
         self,
@@ -439,36 +522,40 @@ class CommunityFeatures(commands.Cog):
         trigger: str
     ):
         async with aiosqlite.connect(config.DATABASE) as db:
-            await db.execute("""
-                DELETE FROM custom_commands
-                WHERE guild_id = ? AND trigger = ?
-            """, (interaction.guild_id, trigger.lower().strip()))
+            await db.execute(
+                "DELETE FROM custom_commands "
+                "WHERE guild_id = ? AND trigger = ?",
+                (interaction.guild.id, trigger.lower())
+            )
             await db.commit()
 
         await interaction.response.send_message(
-            "Custom command removed if it existed.",
+            f"🗑️ Custom command `!{trigger}` removed.",
             ephemeral=True
         )
 
-    @custom.command(name="list", description="List custom commands")
+    @custom.command(name="list", description="View custom commands")
     async def custom_list(self, interaction: discord.Interaction):
         async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT trigger FROM custom_commands
-                WHERE guild_id = ?
-                ORDER BY trigger
-            """, (interaction.guild_id,)) as cursor:
-                rows = await cursor.fetchall()
+            cursor = await db.execute(
+                "SELECT trigger FROM custom_commands WHERE guild_id = ?",
+                (interaction.guild.id,)
+            )
+            results = await cursor.fetchall()
 
-        if not rows:
-            return await interaction.response.send_message(
-                "No custom commands configured.",
+        if not results:
+            await interaction.response.send_message(
+                "There are no custom commands.",
                 ephemeral=True
             )
+            return
+
+        commands_list = "\n".join(
+            f"`!{row[0]}`" for row in results
+        )
 
         await interaction.response.send_message(
-            "**Custom Commands:**\n" +
-            "\n".join(f"`!{row[0]}`" for row in rows),
+            f"**Custom Commands**\n{commands_list}",
             ephemeral=True
         )
 
@@ -476,269 +563,187 @@ class CommunityFeatures(commands.Cog):
     # SUGGESTIONS
     # --------------------------------------------------
 
-    @app_commands.command(name="suggest", description="Submit a server suggestion")
-    @app_commands.guild_only()
-    async def suggest(
-        self,
-        interaction: discord.Interaction,
-        suggestion: str
-    ):
+    @app_commands.command(name="suggest", description="Submit a suggestion")
+    async def suggest(self, interaction: discord.Interaction, suggestion: str):
         async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT channel_id FROM guild_config
-                WHERE guild_id = ?
-            """, (interaction.guild_id,)) as cursor:
-                row = await cursor.fetchone()
+            cursor = await db.execute(
+                "SELECT channel_id FROM suggestion_config WHERE guild_id = ?",
+                (interaction.guild.id,)
+            )
+            result = await cursor.fetchone()
 
-        # Suggestions use the configured level channel until a dedicated
-        # suggestion-channel setting is added.
-        channel = interaction.guild.get_channel(row[0]) if row and row[0] else None
-
-        if channel is None:
-            return await interaction.response.send_message(
-                "The suggestions channel hasn't been configured.",
+        if not result:
+            await interaction.response.send_message(
+                "❌ Suggestions haven't been configured yet.",
                 ephemeral=True
             )
+            return
+
+        channel = interaction.guild.get_channel(result[0])
+
+        if not channel:
+            await interaction.response.send_message(
+                "❌ The suggestion channel no longer exists.",
+                ephemeral=True
+            )
+            return
 
         embed = discord.Embed(
             title="💡 New Suggestion",
-            description=suggestion[:4000],
-            colour=discord.Colour.gold()
+            description=suggestion,
+            color=discord.Color.blurple()
         )
+        embed.set_footer(text=f"Suggested by {interaction.user}")
 
-        embed.set_author(
-            name=interaction.user.display_name,
-            icon_url=interaction.user.display_avatar.url
+        suggestion_message = await channel.send(embed=embed)
+        await suggestion_message.add_reaction("👍")
+        await suggestion_message.add_reaction("👎")
+
+        thread = await suggestion_message.create_thread(
+            name=f"Suggestion discussion - {interaction.user.name}"[:100]
         )
-
-        embed.set_footer(text="Status: Pending • Vote below")
-
-        message = await channel.send(embed=embed)
-
-        try:
-            thread = await message.create_thread(
-                name=f"Suggestion discussion - {interaction.user.display_name}"[:100]
-            )
-            await thread.send(
-                "Discuss this suggestion respectfully. Staff will review it."
-            )
-        except discord.HTTPException:
-            pass
-
-        await message.add_reaction("👍")
-        await message.add_reaction("👎")
 
         async with aiosqlite.connect(config.DATABASE) as db:
             await db.execute("""
                 INSERT INTO suggestions
-                (guild_id, channel_id, message_id, user_id, suggestion, status, created_at)
-                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                (guild_id, user_id, channel_id, message_id, thread_id,
+                 suggestion, status, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
             """, (
-                interaction.guild_id,
-                channel.id,
-                message.id,
+                interaction.guild.id,
                 interaction.user.id,
-                suggestion[:4000],
-                discord.utils.utcnow().timestamp()
+                channel.id,
+                suggestion_message.id,
+                thread.id,
+                suggestion,
+                int(time.time())
             ))
             await db.commit()
 
         await interaction.response.send_message(
-            f"Your suggestion has been submitted to {channel.mention}!",
+            f"✅ Your suggestion has been submitted in {channel.mention}!",
             ephemeral=True
         )
 
-    @app_commands.command(name="suggestion", description="Approve or deny a suggestion")
-    @app_commands.guild_only()
+    suggestions = app_commands.Group(
+        name="suggestions",
+        description="Manage the suggestion system"
+    )
+
+    @suggestions.command(name="setchannel", description="Set the suggestion channel")
     @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.choices(action=[
-        app_commands.Choice(name="Approve", value="approved"),
-        app_commands.Choice(name="Deny", value="denied")
-    ])
-    async def suggestion_review(
+    async def suggestions_setchannel(
         self,
         interaction: discord.Interaction,
-        message_id: str,
-        action: app_commands.Choice[str],
-        reason: str = "No reason provided"
+        channel: discord.TextChannel
     ):
-        try:
-            mid = int(message_id)
-        except ValueError:
-            return await interaction.response.send_message(
-                "Message ID must be numeric.",
-                ephemeral=True
-            )
-
         async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT channel_id, status FROM suggestions
-                WHERE guild_id = ? AND message_id = ?
-            """, (interaction.guild_id, mid)) as cursor:
-                row = await cursor.fetchone()
-
-            if not row:
-                return await interaction.response.send_message(
-                    "Suggestion not found.",
-                    ephemeral=True
-                )
-
-            if row[1] != "pending":
-                return await interaction.response.send_message(
-                    "This suggestion has already been reviewed.",
-                    ephemeral=True
-                )
-
             await db.execute("""
-                UPDATE suggestions
-                SET status = ?
-                WHERE guild_id = ? AND message_id = ?
-            """, (action.value, interaction.guild_id, mid))
+                INSERT OR REPLACE INTO suggestion_config
+                (guild_id, channel_id)
+                VALUES (?, ?)
+            """, (interaction.guild.id, channel.id))
             await db.commit()
 
-        channel = interaction.guild.get_channel(row[0])
+        await interaction.response.send_message(
+            f"✅ Suggestions will now be sent to {channel.mention}.",
+            ephemeral=True
+        )
+
+    @suggestions.command(name="approve", description="Approve a suggestion")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def suggestions_approve(
+        self,
+        interaction: discord.Interaction,
+        suggestion_id: int
+    ):
+        await self.update_suggestion(interaction, suggestion_id, "approved")
+
+    @suggestions.command(name="deny", description="Deny a suggestion")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def suggestions_deny(
+        self,
+        interaction: discord.Interaction,
+        suggestion_id: int
+    ):
+        await self.update_suggestion(interaction, suggestion_id, "denied")
+
+    async def update_suggestion(
+        self,
+        interaction,
+        suggestion_id,
+        status
+    ):
+        async with aiosqlite.connect(config.DATABASE) as db:
+            cursor = await db.execute(
+                "SELECT message_id, channel_id, thread_id, status "
+                "FROM suggestions WHERE id = ? AND guild_id = ?",
+                (suggestion_id, interaction.guild.id)
+            )
+            result = await cursor.fetchone()
+
+            if not result:
+                await interaction.response.send_message(
+                    "❌ Suggestion not found.",
+                    ephemeral=True
+                )
+                return
+
+            message_id, channel_id, thread_id, old_status = result
+
+            if old_status != "pending":
+                await interaction.response.send_message(
+                    "❌ This suggestion has already been reviewed.",
+                    ephemeral=True
+                )
+                return
+
+            await db.execute(
+                "UPDATE suggestions SET status = ? WHERE id = ?",
+                (status, suggestion_id)
+            )
+            await db.commit()
+
+        channel = interaction.guild.get_channel(channel_id)
 
         if channel:
             try:
-                message = await channel.fetch_message(mid)
-                if message.embeds:
-                    embed = message.embeds[0]
-                    embed.colour = (
-                        discord.Colour.green()
-                        if action.value == "approved"
-                        else discord.Colour.red()
-                    )
-                    embed.set_footer(
-                        text=f"Status: {action.value.title()} • Reviewed by {interaction.user}"
-                    )
-                    embed.add_field(
-                        name="Review reason",
-                        value=reason[:1000],
-                        inline=False
-                    )
-                    await message.edit(embed=embed)
-            except discord.HTTPException:
+                message = await channel.fetch_message(message_id)
+
+                embed = message.embeds[0] if message.embeds else discord.Embed()
+
+                embed.color = (
+                    discord.Color.green()
+                    if status == "approved"
+                    else discord.Color.red()
+                )
+
+                embed.add_field(
+                    name="Status",
+                    value=f"**{status.title()}** by {interaction.user.mention}",
+                    inline=False
+                )
+
+                await message.edit(embed=embed)
+
+            except discord.NotFound:
+                pass
+
+        thread = interaction.guild.get_thread(thread_id)
+
+        if thread:
+            try:
+                await thread.send(
+                    f"📢 This suggestion has been **{status}** "
+                    f"by {interaction.user.mention}."
+                )
+            except discord.Forbidden:
                 pass
 
         await interaction.response.send_message(
-            f"Suggestion **{action.value}**.",
+            f"✅ Suggestion #{suggestion_id} has been {status}.",
             ephemeral=True
         )
-
-    # --------------------------------------------------
-    # MESSAGE LISTENER: AFK, STICKY, CUSTOM COMMANDS
-    # --------------------------------------------------
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.guild is None or message.author.bot:
-            return
-
-        guild_id = message.guild.id
-        user_id = message.author.id
-
-        # Clear AFK when the user speaks.
-        async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT reason FROM afk_users
-                WHERE guild_id = ? AND user_id = ?
-            """, (guild_id, user_id)) as cursor:
-                afk_row = await cursor.fetchone()
-
-        if afk_row:
-            await self.remove_afk(message.author)
-
-            try:
-                await message.reply(
-                    f"👋 Welcome back! Your AFK status has been removed.",
-                    delete_after=8
-                )
-            except discord.HTTPException:
-                pass
-
-        # Notify when an AFK user is mentioned.
-        for mentioned in message.mentions:
-            async with aiosqlite.connect(config.DATABASE) as db:
-                async with db.execute("""
-                    SELECT reason FROM afk_users
-                    WHERE guild_id = ? AND user_id = ?
-                """, (guild_id, mentioned.id)) as cursor:
-                    row = await cursor.fetchone()
-
-            if row:
-                try:
-                    await message.reply(
-                        f"💤 **{mentioned.display_name}** is AFK: {row[0]}",
-                        delete_after=12
-                    )
-                except discord.HTTPException:
-                    pass
-
-        # Custom commands use !trigger.
-        content = message.content.strip()
-
-        if content.startswith("!"):
-            trigger = content[1:].lower().split()[0] if content[1:].strip() else ""
-
-            if trigger:
-                async with aiosqlite.connect(config.DATABASE) as db:
-                    async with db.execute("""
-                        SELECT response FROM custom_commands
-                        WHERE guild_id = ? AND trigger = ?
-                    """, (guild_id, trigger)) as cursor:
-                        row = await cursor.fetchone()
-
-                if row:
-                    response = row[0]
-                    response = response.replace("{user}", message.author.mention)
-                    response = response.replace("{server}", message.guild.name)
-
-                    try:
-                        await message.channel.send(response)
-                    except discord.HTTPException:
-                        pass
-
-        # Sticky messages are reposted after every five messages.
-        async with aiosqlite.connect(config.DATABASE) as db:
-            async with db.execute("""
-                SELECT message, last_message_id
-                FROM sticky_messages
-                WHERE guild_id = ? AND channel_id = ?
-            """, (guild_id, message.channel.id)) as cursor:
-                sticky_row = await cursor.fetchone()
-
-            if sticky_row:
-                sticky_text, last_id = sticky_row
-
-                count = 0
-
-                if last_id:
-                    try:
-                        async for msg in message.channel.history(
-                            limit=20,
-                            after=discord.Object(id=last_id)
-                        ):
-                            if not msg.author.bot:
-                                count += 1
-                    except discord.HTTPException:
-                        count = 5
-
-                if count >= 5:
-                    try:
-                        sticky_message = await message.channel.send(sticky_text)
-
-                        await db.execute("""
-                            UPDATE sticky_messages
-                            SET last_message_id = ?
-                            WHERE guild_id = ? AND channel_id = ?
-                        """, (
-                            sticky_message.id,
-                            guild_id,
-                            message.channel.id
-                        ))
-                        await db.commit()
-                    except discord.HTTPException:
-                        pass
 
 
 async def setup(bot):
