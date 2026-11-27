@@ -4,8 +4,18 @@ from discord.ext import commands
 import config
 import os
 import asyncio
+import logging
+import traceback
 
 from utils.database import init_db
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+logger = logging.getLogger("Teamy")
 
 
 class Teamy(commands.Bot):
@@ -21,18 +31,44 @@ class Teamy(commands.Bot):
             intents=intents
         )
 
+        self.failed_extensions = []
+
     async def setup_hook(self):
+        logger.info("Initialising Teamy database...")
+
         await init_db()
 
-        for filename in sorted(os.listdir("./cogs")):
-            if filename.endswith(".py") and not filename.startswith("_"):
-                extension = f"cogs.{filename[:-3]}"
+        logger.info("Database initialised.")
 
-                try:
-                    await self.load_extension(extension)
-                    print(f"Loaded {extension}")
-                except Exception as error:
-                    print(f"Failed {extension}: {error}")
+        cog_folder = "./cogs"
+
+        if not os.path.isdir(cog_folder):
+            logger.error("The cogs folder does not exist!")
+            return
+
+        extensions = sorted(
+            filename[:-3]
+            for filename in os.listdir(cog_folder)
+            if filename.endswith(".py")
+            and not filename.startswith("_")
+        )
+
+        logger.info("Found %s cog files.", len(extensions))
+
+        for extension_name in extensions:
+            extension = f"cogs.{extension_name}"
+
+            try:
+                await self.load_extension(extension)
+                logger.info("LOADED: %s", extension)
+
+            except Exception:
+                self.failed_extensions.append(extension)
+                logger.error(
+                    "FAILED TO LOAD: %s\n%s",
+                    extension,
+                    traceback.format_exc()
+                )
 
         try:
             if config.GUILD_ID:
@@ -42,20 +78,48 @@ class Teamy(commands.Bot):
             else:
                 synced = await self.tree.sync()
 
-            print(f"Registered {len(synced)} slash commands")
+            logger.info(
+                "Successfully registered %s slash commands.",
+                len(synced)
+            )
 
-        except Exception as error:
-            print(f"Command sync failed: {error}")
+        except Exception:
+            logger.error(
+                "COMMAND SYNC FAILED:\n%s",
+                traceback.format_exc()
+            )
+
+        if self.failed_extensions:
+            logger.error(
+                "TEAMY STARTED WITH %s FAILED COGS: %s",
+                len(self.failed_extensions),
+                ", ".join(self.failed_extensions)
+            )
+        else:
+            logger.info("ALL COGS LOADED SUCCESSFULLY.")
 
     async def on_ready(self):
-        print(f"Logged in as {self.user}")
-        print(f"Connected to {len(self.guilds)} servers")
+        logger.info("Logged in as %s", self.user)
+        logger.info("Connected to %s servers.", len(self.guilds))
+
+        if self.failed_extensions:
+            logger.warning(
+                "Some cogs failed to load. Check the startup logs."
+            )
+        else:
+            logger.info("Teamy is fully operational.")
 
 
 bot = Teamy()
 
 
 async def main():
+    if not config.TOKEN:
+        raise RuntimeError(
+            "DISCORD_BOT_TOKEN is missing. "
+            "Check your Railway environment variables."
+        )
+
     async with bot:
         await bot.start(config.TOKEN)
 
