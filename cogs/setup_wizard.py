@@ -147,19 +147,45 @@ class SetupWizard(commands.Cog):
                 @discord.ui.button(label="➡️ Do this later", style=discord.ButtonStyle.secondary)
                 async def skip3(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 4
-                                await self.update_content(interaction)
+                    await self.update_content(interaction)
+                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
+                async def back3(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 2
+                    await self.update_content(interaction)
+            return embed, Step3View
 
-        @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
-        async def skip4(self, interaction: discord.Interaction):
-            self.step = 5
-            await self.update_content(interaction)
-
-        @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
-        async def back4(self, interaction: discord.Interaction):
-            self.step = 3
-            await self.update_content(interaction)
-
-            return embed, Step4View
+        elif step == 4:
+            embed = discord.Embed(
+                title="Step 4 — Create Channels Automatically",
+                description=(
+                    "I can create a full channel structure:\n\n"
+                    "INFORMATION — Rules, Announcements, Welcome\n"
+                    "COMMUNITY — Chat, Introductions, Suggestions\n"
+                    "SUPPORT — Ticket Panel\n"
+                    "STAFF AREA — Logs, Dashboard (Staff Only)\n"
+                    "VOICE CHANNELS — General, Gaming\n\n"
+                    "Would you like me to create these now?"
+                ),
+                color=discord.Color.teal()
+            )
+            class Step4View(SetupWizardView):
+                @discord.ui.button(label="📂 Create Channels Now", style=discord.ButtonStyle.green)
+                async def makechans(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_message(
+                        "✅ Run /setup-server to create all channels automatically!",
+                        ephemeral=True
+                    )
+                    self.step = 5
+                    await self.update_content(interaction)
+                @discord.ui.button(label="➡️ I'll do this manually", style=discord.ButtonStyle.secondary)
+                async def skip4(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 5
+                    await self.update_content(interaction)
+                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
+                async def back4(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 3
+                    await self.update_content(interaction)
+            return embed, Step4View        
 
         elif step == 5:
             embed = discord.Embed(
@@ -269,9 +295,9 @@ class SetupWizard(commands.Cog):
                 async def back8(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 7
                     await self.update_content(interaction)
-                return embed, Step8View
+            return embed, Step8View
 
-            elif step == 9:
+        elif step == 9:
             embed = discord.Embed(
                 title="🎉 Setup Complete!",
                 description=(
