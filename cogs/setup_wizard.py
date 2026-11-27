@@ -186,7 +186,7 @@ class SetupWizard(commands.Cog):
                     self.step = 3
                     await self.update_content(interaction)
             return embed, Step4View        
-            elif step == 5:
+                 elif step == 5:
             embed = discord.Embed(
                 title="Step 5 — Set Up Log Channels",
                 description=(
