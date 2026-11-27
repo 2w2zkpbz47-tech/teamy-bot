@@ -6,7 +6,7 @@ import aiosqlite
 import random
 import config
 import math
-from datetime import datetime, timezone
+import time
 
 
 def calculate_level(xp: int) -> int:
@@ -17,6 +17,21 @@ def xp_for_next_level(level: int) -> int:
     return ((level + 1) * 8) ** 2
 
 
+def voice_eligible(member: discord.Member) -> bool:
+    if member.bot or member.voice is None:
+        return False
+
+    voice = member.voice
+
+    return not (
+        voice.afk
+        or voice.self_deaf
+        or voice.deaf
+        or voice.self_mute
+        or voice.mute
+    )
+
+
 class Leveling(commands.Cog):
     leaderboard_group = app_commands.Group(
         name="leaderboard",
@@ -25,11 +40,8 @@ class Leveling(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.message_cooldowns = {}
         self.voice_sessions = {}
-        self.voice_tracker.start()
-
-    async def cog_unload(self):
-        self.voice_tracker.cancel()
 
     async def cog_load(self):
         async with aiosqlite.connect(config.DATABASE) as db:
@@ -65,6 +77,11 @@ class Leveling(commands.Cog):
             """)
 
             await db.commit()
+
+        self.voice_tracker.start()
+
+    def cog_unload(self):
+        self.voice_tracker.cancel()
 
     # -----------------------------------------------
     # PROFILE
@@ -112,7 +129,11 @@ class Leveling(commands.Cog):
                     FROM levels
                     WHERE guild_id = ? AND user_id = ?
                 )
-            """, (interaction.guild.id, interaction.guild.id, member.id)) as cursor:
+            """, (
+                interaction.guild.id,
+                interaction.guild.id,
+                member.id
+            )) as cursor:
                 message_rank_row = await cursor.fetchone()
 
             async with db.execute("""
@@ -123,7 +144,11 @@ class Leveling(commands.Cog):
                     FROM voice_levels
                     WHERE guild_id = ? AND user_id = ?
                 )
-            """, (interaction.guild.id, interaction.guild.id, member.id)) as cursor:
+            """, (
+                interaction.guild.id,
+                interaction.guild.id,
+                member.id
+            )) as cursor:
                 voice_rank_row = await cursor.fetchone()
 
         message_row = message_row or (0, 0, 0, 0)
@@ -190,7 +215,10 @@ class Leveling(commands.Cog):
         )
 
         embed.set_footer(
-            text=f"Member since {member.joined_at.strftime('%d %b %Y') if member.joined_at else 'Unknown'}"
+            text=(
+                f"Member since "
+                f"{member.joined_at.strftime('%d %b %Y') if member.joined_at else 'Unknown'}"
+            )
         )
 
         await interaction.response.send_message(embed=embed)
@@ -286,7 +314,6 @@ class Leveling(commands.Cog):
             )
 
         lines = []
-
         medals = ["🥇", "🥈", "🥉"]
 
         for index, (user_id, xp, level, messages) in enumerate(rows, 1):
@@ -368,13 +395,13 @@ class Leveling(commands.Cog):
             async with db.execute("""
                 SELECT user_id, teams_created
                 FROM member_stats
-                WHERE guild_id = ?
+                WHERE guild_id = ? AND teams_created > 0
                 ORDER BY teams_created DESC
                 LIMIT 10
             """, (interaction.guild.id,)) as cursor:
                 rows = await cursor.fetchall()
 
-        if not rows or not any(row[1] for row in rows):
+        if not rows:
             return await interaction.response.send_message(
                 "There isn't any team creation data yet.",
                 ephemeral=True
@@ -384,9 +411,6 @@ class Leveling(commands.Cog):
         medals = ["🥇", "🥈", "🥉"]
 
         for index, (user_id, count) in enumerate(rows, 1):
-            if count <= 0:
-                continue
-
             medal = medals[index - 1] if index <= 3 else f"**#{index}**"
 
             lines.append(
@@ -410,10 +434,18 @@ class Leveling(commands.Cog):
         if message.author.bot or message.guild is None:
             return
 
-        # Prevent XP farming with extremely short messages.
         if len(message.content.strip()) < 3 and not message.attachments:
             return
 
+        key = (message.guild.id, message.author.id)
+        now = time.monotonic()
+
+        last_award = self.message_cooldowns.get(key)
+
+        if last_award is not None and now - last_award < 30:
+            return
+
+        self.message_cooldowns[key] = now
         xp_gain = random.randint(15, 25)
 
         async with aiosqlite.connect(config.DATABASE) as db:
@@ -467,7 +499,7 @@ class Leveling(commands.Cog):
                 pass
 
     # -----------------------------------------------
-    # VOICE XP TRACKER
+    # VOICE STATE UPDATES
     # -----------------------------------------------
 
     @commands.Cog.listener()
@@ -480,40 +512,47 @@ class Leveling(commands.Cog):
         if member.bot:
             return
 
-        if before.channel is None and after.channel is not None:
-            self.voice_sessions[(member.guild.id, member.id)] = (
-                discord.utils.utcnow()
-            )
+        key = (member.guild.id, member.id)
 
-        elif before.channel is not None and after.channel is None:
-            self.voice_sessions.pop((member.guild.id, member.id), None)
+        if voice_eligible(member):
+            self.voice_sessions.setdefault(key, (time.monotonic(), 0.0))
+        else:
+            self.voice_sessions.pop(key, None)
 
-        elif before.channel != after.channel:
-            self.voice_sessions[(member.guild.id, member.id)] = (
-                discord.utils.utcnow()
-            )
+    # -----------------------------------------------
+    # VOICE XP TRACKER
+    # -----------------------------------------------
 
-    @tasks.loop(minutes=1)
+    @tasks.loop(seconds=10)
     async def voice_tracker(self):
+        now = time.monotonic()
+        active_members = set()
+
         for guild in self.bot.guilds:
             for channel in guild.voice_channels:
                 for member in channel.members:
-                    if member.bot:
+                    if not voice_eligible(member):
                         continue
 
-                    if member.voice is None:
+                    key = (guild.id, member.id)
+                    active_members.add(key)
+
+                    session = self.voice_sessions.get(key)
+
+                    if session is None:
+                        self.voice_sessions[key] = (now, 0.0)
                         continue
 
-                    if member.voice.afk:
-                        continue
+                    last_check, remainder = session
 
-                    if member.voice.self_deaf or member.voice.deaf:
-                        continue
+                    # Avoid awarding excessive XP if the task stalls.
+                    elapsed = min(now - last_check, 30.0)
+                    total = remainder + elapsed
 
-                    if member.voice.self_mute or member.voice.mute:
-                        continue
+                    minutes_earned = int(total // 60)
+                    new_remainder = total % 60
 
-                    xp_gain = 5
+                    self.voice_sessions[key] = (now, new_remainder)
 
                     async with aiosqlite.connect(config.DATABASE) as db:
                         await db.execute("""
@@ -530,35 +569,48 @@ class Leveling(commands.Cog):
 
                         await db.execute("""
                             UPDATE levels
-                            SET voice_time = voice_time + 60
+                            SET voice_time = voice_time + ?
                             WHERE guild_id = ? AND user_id = ?
-                        """, (guild.id, member.id))
+                        """, (
+                            int(elapsed),
+                            guild.id,
+                            member.id
+                        ))
 
-                        await db.execute("""
-                            UPDATE voice_levels
-                            SET xp = xp + ?
-                            WHERE guild_id = ? AND user_id = ?
-                        """, (xp_gain, guild.id, member.id))
-
-                        async with db.execute("""
-                            SELECT xp, level
-                            FROM voice_levels
-                            WHERE guild_id = ? AND user_id = ?
-                        """, (guild.id, member.id)) as cursor:
-                            xp, old_level = await cursor.fetchone()
-
-                        new_level = calculate_level(xp)
-
-                        if new_level > old_level:
+                        if minutes_earned:
                             await db.execute("""
                                 UPDATE voice_levels
-                                SET level = ?
+                                SET xp = xp + ?
                                 WHERE guild_id = ? AND user_id = ?
-                            """, (new_level, guild.id, member.id))
+                            """, (
+                                minutes_earned * 5,
+                                guild.id,
+                                member.id
+                            ))
+
+                            async with db.execute("""
+                                SELECT xp, level
+                                FROM voice_levels
+                                WHERE guild_id = ? AND user_id = ?
+                            """, (guild.id, member.id)) as cursor:
+                                xp, old_level = await cursor.fetchone()
+
+                            new_level = calculate_level(xp)
+
+                            if new_level > old_level:
+                                await db.execute("""
+                                    UPDATE voice_levels
+                                    SET level = ?
+                                    WHERE guild_id = ? AND user_id = ?
+                                """, (
+                                    new_level,
+                                    guild.id,
+                                    member.id
+                                ))
 
                         await db.commit()
 
-                    if new_level > old_level:
+                    if minutes_earned and new_level > old_level:
                         try:
                             await channel.send(
                                 f"🎉 {member.mention} reached "
@@ -566,6 +618,12 @@ class Leveling(commands.Cog):
                             )
                         except discord.HTTPException:
                             pass
+
+        # Remove sessions for members who have left voice
+        # or are no longer eligible for XP.
+        for key in list(self.voice_sessions):
+            if key not in active_members:
+                self.voice_sessions.pop(key, None)
 
     @voice_tracker.before_loop
     async def before_voice_tracker(self):
