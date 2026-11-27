@@ -1,9 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import aiosqlite
 import config
-from typing import Optional
 
 class SetupWizardView(discord.ui.View):
     def __init__(self, cog: "SetupWizard", step: int = 0):
@@ -12,6 +10,13 @@ class SetupWizardView(discord.ui.View):
         self.step = step
         self.guild = None
         self.message = None
+
+    async def update_content(self, interaction: discord.Interaction):
+        embed, view_class = await self.cog.get_step_content(self.step, interaction.guild)
+        new_view = view_class(self.cog, step=self.step)
+        new_view.message = self.message
+        new_view.guild = self.guild
+        await interaction.response.edit_message(embed=embed, view=new_view)
 
     async def on_timeout(self):
         try:
@@ -59,7 +64,7 @@ class SetupWizard(commands.Cog):
                     self.guild = interaction.guild
                     self.step = 1
                     await self.update_content(interaction)
-            return embed, StartView(self, step)
+            return embed, StartView
 
         elif step == 1:
             embed = discord.Embed(
@@ -85,7 +90,7 @@ class SetupWizard(commands.Cog):
                 async def back1(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 0
                     await self.update_content(interaction)
-            return embed, Step1View(self, step)
+            return embed, Step1View
 
         elif step == 2:
             embed = discord.Embed(
@@ -103,6 +108,10 @@ class SetupWizard(commands.Cog):
             class Step2View(SetupWizardView):
                 @discord.ui.button(label="🔨 Create Roles Now", style=discord.ButtonStyle.green)
                 async def makeroles(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_message(
+                        "✅ Use `/setup-server` command to create roles and channels!",
+                        ephemeral=True
+                    )
                     self.step = 3
                     await self.update_content(interaction)
                 @discord.ui.button(label="➡️ I'll do this later", style=discord.ButtonStyle.secondary)
@@ -113,7 +122,7 @@ class SetupWizard(commands.Cog):
                 async def back2(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 1
                     await self.update_content(interaction)
-            return embed, Step2View(self, step)
+            return embed, Step2View
 
         elif step == 3:
             embed = discord.Embed(
@@ -142,7 +151,7 @@ class SetupWizard(commands.Cog):
                 async def back3(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 2
                     await self.update_content(interaction)
-            return embed, Step3View(self, step)
+            return embed, Step3View
 
         elif step == 4:
             embed = discord.Embed(
@@ -161,6 +170,10 @@ class SetupWizard(commands.Cog):
             class Step4View(SetupWizardView):
                 @discord.ui.button(label="📂 Create Channels Now", style=discord.ButtonStyle.green)
                 async def makechans(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.send_message(
+                        "✅ Running `/setup-server` will create all channels for you!",
+                        ephemeral=True
+                    )
                     self.step = 5
                     await self.update_content(interaction)
                 @discord.ui.button(label="➡️ I'll do this manually", style=discord.ButtonStyle.secondary)
@@ -171,7 +184,7 @@ class SetupWizard(commands.Cog):
                 async def back4(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 3
                     await self.update_content(interaction)
-            return embed, Step4View(self, step)
+            return embed, Step4View
 
         elif step == 5:
             embed = discord.Embed(
@@ -198,7 +211,7 @@ class SetupWizard(commands.Cog):
                 async def back5(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 4
                     await self.update_content(interaction)
-            return embed, Step5View(self, step)
+            return embed, Step5View
 
         elif step == 6:
             embed = discord.Embed(
@@ -224,7 +237,7 @@ class SetupWizard(commands.Cog):
                 async def back6(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 5
                     await self.update_content(interaction)
-            return embed, Step6View(self, step)
+            return embed, Step6View
 
         elif step == 7:
             embed = discord.Embed(
@@ -250,7 +263,7 @@ class SetupWizard(commands.Cog):
                 async def back7(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 6
                     await self.update_content(interaction)
-            return embed, Step7View(self, step)
+            return embed, Step7View
 
         elif step == 8:
             embed = discord.Embed(
@@ -272,16 +285,4 @@ class SetupWizard(commands.Cog):
                 async def done8(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 9
                     await self.update_content(interaction)
-                @discord.ui.button(label="➡️ Later", style=discord.ButtonStyle.secondary)
-                async def skip8(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    self.step = 9
-                    await self.update_content(interaction)
-                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
-                async def back8(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    self.step = 7
-                    await self.update_content(interaction)
-            return embed, Step8View(self, step)
-
-        elif step == 9:
-            embed = discord.Embed(
-                title="🎉 Setup Complete!",
+                @discord.ui.button(label="➡️ Later", style=
