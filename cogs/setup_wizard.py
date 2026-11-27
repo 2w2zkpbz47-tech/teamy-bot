@@ -171,7 +171,7 @@ class SetupWizard(commands.Cog):
                 @discord.ui.button(label="📂 Create Channels Now", style=discord.ButtonStyle.green)
                 async def makechans(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_message(
-                        "✅ Running `/setup-server` will create all channels for you!",
+                        "✅ Run `/setup-server` to create all channels automatically!",
                         ephemeral=True
                     )
                     self.step = 5
@@ -285,4 +285,68 @@ class SetupWizard(commands.Cog):
                 async def done8(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 9
                     await self.update_content(interaction)
-                @discord.ui.button(label="➡️ Later", style=
+                @discord.ui.button(label="➡️ Later", style=discord.ButtonStyle.secondary)
+                async def skip8(self, interaction: discord.Interaction, button: discord.ui.Button):
+                                        self.step = 9
+                    await self.update_content(interaction)
+                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
+                async def back8(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 7
+                    await self.update_content(interaction)
+            return embed, Step8View
+
+        elif step == 9:
+            embed = discord.Embed(
+                title="🎉 Setup Complete!",
+                description=(
+                    "Great job! Here's your final checklist:\n\n"
+                    "✅ Bot online & slash commands working\n"
+                    "✅ Roles created & assigned\n"
+                    "✅ Channels organized\n"
+                    "✅ Logs configured\n"
+                    "✅ Ticket panel posted\n"
+                    "✅ AutoMod & Anti-Nuke active\n"
+                    "✅ Welcome messages set\n\n"
+                    "📖 **Need help later?** Just type `/help` or run `/wizard` again!\n\n"
+                    "💡 **Quick commands cheat sheet:**\n"
+                    "• `/ticket panel` → Post ticket buttons\n"
+                    "• `/warn @user reason` → Issue warning\n"
+                    "• `/automod enable` → Turn on protection\n"
+                    "• `/welcome toggle on` → Welcome messages\n"
+                    "• `/setup-server` → Auto-create roles & channels\n\n"
+                    "Enjoy using Teamy! 🚀"
+                ),
+                color=discord.Color.green()
+            )
+            class Step9View(SetupWizardView):
+                @discord.ui.button(label="✅ Finish", style=discord.ButtonStyle.green)
+                async def finish(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    await interaction.response.edit_message(
+                        content="🎊 **All done!** Enjoy your fully set up server!",
+                        embed=None,
+                        view=None
+                    )
+                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary)
+                async def back9(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 8
+                    await self.update_content(interaction)
+            return embed, Step9View
+
+        else:
+            embed = discord.Embed(
+                title="✅ Done!",
+                description="You're all set up!",
+                color=discord.Color.green()
+            )
+            return embed, None
+
+    @app_commands.command(name="wizard", description="🧙 Start the full server setup wizard")
+    async def start_wizard(self, interaction: discord.Interaction):
+        embed, ViewClass = await self.get_step_content(0, interaction.guild)
+        view = ViewClass(self, step=0)
+        view.message = await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+        view.guild = interaction.guild
+
+
+async def setup(bot):
+    await bot.add_cog(SetupWizard(bot))
