@@ -21,8 +21,7 @@ class StaffPerformance(commands.Cog):
 
         async with aiosqlite.connect(config.DATABASE) as db:
             async with db.execute("""
-                SELECT role_id
-                FROM staff_role_config
+                SELECT role_id FROM staff_role_config
                 WHERE guild_id = ? AND division = 'staff_managers'
             """, (member.guild.id,)) as cursor:
                 rows = await cursor.fetchall()
@@ -33,14 +32,14 @@ class StaffPerformance(commands.Cog):
     async def check_access(self, interaction):
         if interaction.guild is None:
             await interaction.response.send_message(
-                "This command can only be used inside a server.",
+                "Use this command inside your server.",
                 ephemeral=True
             )
             return False
 
         if not await self.is_manager(interaction.user):
             await interaction.response.send_message(
-                "Only Staff Managers and the server owner can view performance records.",
+                "Only Staff Managers and the server owner can access this.",
                 ephemeral=True
             )
             return False
@@ -49,63 +48,51 @@ class StaffPerformance(commands.Cog):
 
     async def get_stats(self, guild_id, user_id):
         async with aiosqlite.connect(config.DATABASE) as db:
-            async def count(query, parameters):
-                async with db.execute(query, parameters) as cursor:
+
+            async def count(query, params):
+                async with db.execute(query, params) as cursor:
                     row = await cursor.fetchone()
                     return row[0] if row else 0
 
-            claimed = await count("""
+            stats = {}
+
+            stats["claimed"] = await count("""
                 SELECT COUNT(*) FROM tickets
                 WHERE guild_id = ? AND claimed_by = ?
             """, (guild_id, user_id))
 
-            closed = await count("""
+            stats["closed"] = await count("""
                 SELECT COUNT(*) FROM tickets
                 WHERE guild_id = ? AND claimed_by = ? AND closed = 1
             """, (guild_id, user_id))
 
-            open_claims = await count("""
+            stats["open"] = await count("""
                 SELECT COUNT(*) FROM tickets
                 WHERE guild_id = ? AND claimed_by = ? AND closed = 0
             """, (guild_id, user_id))
 
-            submitted = await count("""
+            stats["submitted"] = await count("""
                 SELECT COUNT(*) FROM staff_requests
                 WHERE guild_id = ? AND requester_id = ?
             """, (guild_id, user_id))
 
-            approved = await count("""
+            stats["received"] = await count("""
                 SELECT COUNT(*) FROM staff_requests
-                WHERE guild_id = ? AND requester_id = ?
+                WHERE guild_id = ? AND target_id = ?
                 AND status = 'approved'
             """, (guild_id, user_id))
 
-            pending = await count("""
-                SELECT COUNT(*) FROM staff_requests
-                WHERE guild_id = ? AND requester_id = ?
-                AND status = 'pending'
-            """, (guild_id, user_id))
-
-            strikes_issued = await count("""
+            stats["strikes"] = await count("""
                 SELECT COUNT(*) FROM staff_strikes
-                WHERE guild_id = ? AND issued_by = ?
+                WHERE guild_id = ? AND user_id = ?
             """, (guild_id, user_id))
 
-            notes_added = await count("""
+            stats["notes"] = await count("""
                 SELECT COUNT(*) FROM division_notes
-                WHERE guild_id = ? AND added_by = ?
+                WHERE guild_id = ? AND user_id = ?
             """, (guild_id, user_id))
 
-        return {
-            "claimed": claimed,
-            "closed": closed,
-            "open": open_claims,
-            "submitted": submitted,
-            "approved": approved,
-            "pending": pending,
-            "strikes": strikes_issued,
-            "notes": notes_added
-        }
+        return stats
 
     @staffperformance.command(
         name="member",
@@ -132,46 +119,22 @@ class StaffPerformance(commands.Cog):
 
         embed.set_thumbnail(url=staff_member.display_avatar.url)
 
-        embed.add_field(
-            name="🎫 Tickets Claimed",
-            value=str(stats["claimed"]),
-            inline=True
-        )
-        embed.add_field(
-            name="🔒 Claimed Tickets Closed",
-            value=str(stats["closed"]),
-            inline=True
-        )
-        embed.add_field(
-            name="⏳ Open Claimed Tickets",
-            value=str(stats["open"]),
-            inline=True
-        )
-        embed.add_field(
-            name="📋 Requests Submitted",
-            value=str(stats["submitted"]),
-            inline=True
-        )
-        embed.add_field(
-            name="✅ Requests Approved",
-            value=str(stats["approved"]),
-            inline=True
-        )
-        embed.add_field(
-            name="⌛ Requests Pending",
-            value=str(stats["pending"]),
-            inline=True
-        )
-        embed.add_field(
-            name="⚠️ Strikes Issued",
-            value=str(stats["strikes"]),
-            inline=True
-        )
-        embed.add_field(
-            name="📝 Notes Added",
-            value=str(stats["notes"]),
-            inline=True
-        )
+        fields = [
+            ("🎫 Tickets Claimed", stats["claimed"]),
+            ("🔒 Claimed Tickets Closed", stats["closed"]),
+            ("⏳ Open Claimed Tickets", stats["open"]),
+            ("📋 Requests Submitted", stats["submitted"]),
+            ("✅ Approved Actions Received", stats["received"]),
+            ("⚠️ Strikes Received", stats["strikes"]),
+            ("📝 Staff Notes", stats["notes"])
+        ]
+
+        for name, value in fields:
+            embed.add_field(
+                name=name,
+                value=str(value),
+                inline=True
+            )
 
         embed.set_footer(
             text="Teamy Staff Management • Internal Performance Report"
@@ -208,7 +171,7 @@ class StaffPerformance(commands.Cog):
         )
 
         if not rows:
-            embed.description = "No ticket-claim activity has been recorded yet."
+            embed.description = "No ticket claims have been recorded yet."
         else:
             lines = []
 
@@ -224,10 +187,6 @@ class StaffPerformance(commands.Cog):
                 )
 
             embed.description = "\n".join(lines)
-
-        embed.set_footer(
-            text="Teamy Staff Management • Internal Leaderboard"
-        )
 
         await interaction.response.send_message(
             embed=embed,
