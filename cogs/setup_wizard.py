@@ -35,7 +35,7 @@ class SetupWizard(commands.Cog):
     async def cog_check(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
-                "❌ You need **Administrator** permission to use the setup wizard.",
+                "❌ You need Administrator permission to use the setup wizard.",
                 ephemeral=True
             )
             return False
@@ -47,15 +47,15 @@ class SetupWizard(commands.Cog):
                 title="🧙 Teamy Setup Wizard",
                 description=(
                     "Welcome! I'll guide you through setting up your server step by step.\n\n"
-                    "📋 **What we'll cover:**\n"
-                    "1️⃣  Server Info & Configuration\n"
-                    "2️⃣  Staff Roles Setup\n"
-                    "3️⃣  Log Channels Setup\n"
-                    "4️⃣  Ticket System & Panels\n"
-                    "5️⃣  AutoMod & Anti-Nuke\n"
-                    "6️⃣  Welcome & Community Features\n"
-                    "7️⃣  Final Summary & Checklist\n\n"
-                    "💡 You can skip any step or go back at any time. Let's get started!"
+                    "What we'll cover:\n"
+                    "1. Server Info & Configuration\n"
+                    "2. Staff Roles Setup\n"
+                    "3. Log Channels Setup\n"
+                    "4. Ticket System & Panels\n"
+                    "5. AutoMod & Anti-Nuke\n"
+                    "6. Welcome & Community Features\n"
+                    "7. Final Summary & Checklist\n\n"
+                    "You can skip any step or go back at any time. Let's get started!"
                 ),
                 color=getattr(config, "COLOR_INFO", 0x9B59B6)
             )
@@ -69,12 +69,12 @@ class SetupWizard(commands.Cog):
 
         elif step == 1:
             embed = discord.Embed(
-                title="Step 1️⃣ — Basic Server Configuration",
+                title="Step 1 — Basic Server Configuration",
                 description=(
-                    f"**Server Name:** {guild.name}\n"
-                    f"**Server ID:** `{guild.id}`\n"
-                    f"**Owner:** {guild.owner.mention if guild.owner else 'Unknown'}\n\n"
-                    "📌 **Is this your main server?**"
+                    f"Server Name: {guild.name}\n"
+                    f"Server ID: {guild.id}\n"
+                    f"Owner: {guild.owner.mention if guild.owner else 'Unknown'}\n\n"
+                    "Is this your main server?"
                 ),
                 color=getattr(config, "COLOR_TICKET", 0x3498DB)
             )
@@ -95,14 +95,14 @@ class SetupWizard(commands.Cog):
 
         elif step == 2:
             embed = discord.Embed(
-                title="Step 2️⃣ — Create Roles Automatically",
+                title="Step 2 — Create Roles Automatically",
                 description=(
                     "I can create these roles for you:\n"
-                    "• 👑 Admin\n"
-                    "• 🛡️ Moderator\n"
-                    "• 🎫 Ticket Support\n"
-                    "• 👥 Member\n\n"
-                    "⚠️ **Important:** Move my role ABOVE these roles after I create them!"
+                    "• Admin\n"
+                    "• Moderator\n"
+                    "• Ticket Support\n"
+                    "• Member\n\n"
+                    "Important: Move my role ABOVE these roles after I create them!"
                 ),
                 color=discord.Color.orange()
             )
@@ -110,7 +110,7 @@ class SetupWizard(commands.Cog):
                 @discord.ui.button(label="🔨 Create Roles Now", style=discord.ButtonStyle.green)
                 async def makeroles(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_message(
-                        "✅ Use `/setup-server` command to create roles and channels!",
+                        "✅ Use /setup-server command to create roles and channels!",
                         ephemeral=True
                     )
                     self.step = 3
@@ -127,15 +127,15 @@ class SetupWizard(commands.Cog):
 
         elif step == 3:
             embed = discord.Embed(
-                title="Step 3️⃣ — Assign Staff Roles",
+                title="Step 3 — Assign Staff Roles",
                 description=(
                     "Tell me which roles handle what:\n\n"
-                    "• **General Staff Role** → Moderation commands\n"
-                    "• **Ticket Support Role** → Ticket management\n"
-                    "• **Admin Role** → Full bot control\n\n"
+                    "• General Staff Role -> Moderation commands\n"
+                    "• Ticket Support Role -> Ticket management\n"
+                    "• Admin Role -> Full bot control\n\n"
                     "Run these commands when ready:\n"
-                    "`/staff set-role @Moderator`\n"
-                    "`/staff-role add division:Ticket Support role:@Ticket Support`"
+                    "/staff set-role @Moderator\n"
+                    "/staff-role add division:Ticket Support role:@Ticket Support"
                 ),
                 color=discord.Color.blue()
             )
@@ -156,14 +156,14 @@ class SetupWizard(commands.Cog):
 
         elif step == 4:
             embed = discord.Embed(
-                title="Step 4️⃣ — Create Channels Automatically",
+                title="Step 4 — Create Channels Automatically",
                 description=(
                     "I can create a full channel structure:\n\n"
-                    "📢 INFORMATION — Rules, Announcements, Welcome\n"
-                    "💬 COMMUNITY — Chat, Introductions, Suggestions\n"
-                    "🎫 SUPPORT — Ticket Panel\n"
-                    "🔒 STAFF AREA — Logs, Dashboard (Staff Only)\n"
-                    "🔊 VOICE CHANNELS — General, Gaming\n\n"
+                    "INFORMATION — Rules, Announcements, Welcome\n"
+                    "COMMUNITY — Chat, Introductions, Suggestions\n"
+                    "SUPPORT — Ticket Panel\n"
+                    "STAFF AREA — Logs, Dashboard (Staff Only)\n"
+                    "VOICE CHANNELS — General, Gaming\n\n"
                     "Would you like me to create these now?"
                 ),
                 color=discord.Color.teal()
@@ -172,7 +172,7 @@ class SetupWizard(commands.Cog):
                 @discord.ui.button(label="📂 Create Channels Now", style=discord.ButtonStyle.green)
                 async def makechans(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.send_message(
-                        "✅ Run `/setup-server` to create all channels automatically!",
+                        "✅ Run /setup-server to create all channels automatically!",
                         ephemeral=True
                     )
                     self.step = 5
@@ -185,17 +185,15 @@ class SetupWizard(commands.Cog):
                 async def back4(self, interaction: discord.Interaction, button: discord.ui.Button):
                     self.step = 3
                     await self.update_content(interaction)
-            return embed, Step4View
-
-        elif step == 5:
+            return embed, Step4View        elif step == 5:
             embed = discord.Embed(
-                title="Step 5️⃣ — Set Up Log Channels",
+                title="Step 5 — Set Up Log Channels",
                 description=(
                     "Where should I log events?\n\n"
                     "Run these commands when ready:\n"
-                    "`/setup channels mod-logs #mod-logs`\n"
-                    "`/setup channels ticket-logs #ticket-logs`\n"
-                    "`/setup channels automod-logs #automod-logs`"
+                    "/setup channels mod-logs #mod-logs\n"
+                    "/setup channels ticket-logs #ticket-logs\n"
+                    "/setup channels automod-logs #automod-logs"
                 ),
                 color=discord.Color.purple()
             )
@@ -216,11 +214,11 @@ class SetupWizard(commands.Cog):
 
         elif step == 6:
             embed = discord.Embed(
-                title="Step 6️⃣ — Ticket System Setup",
+                title="Step 6 — Ticket System Setup",
                 description=(
-                    "Almost there! 🎫 Tickets let members get help privately.\n\n"
-                    "**Run this command:**\n"
-                    "`/ticket panel channel:#ticket-panel`\n"
+                    "Almost there! Tickets let members get help privately.\n\n"
+                    "Run this command:\n"
+                    "/ticket panel channel:#ticket-panel\n"
                     "Posts the buttons members click to open tickets"
                 ),
                 color=discord.Color.blue()
@@ -242,12 +240,12 @@ class SetupWizard(commands.Cog):
 
         elif step == 7:
             embed = discord.Embed(
-                title="Step 7️⃣ — AutoMod & Security",
+                title="Step 7 — AutoMod & Security",
                 description=(
-                    "🛡️ Protect your server automatically!\n\n"
-                    "**Run these commands:**\n"
-                    "`/automod enable` — Auto-delete spam/links/bad words\n"
-                    "`/antinuke enable` — Stop mass deletions/raids"
+                    "Protect your server automatically!\n\n"
+                    "Run these commands:\n"
+                    "/automod enable — Auto-delete spam/links/bad words\n"
+                    "/antinuke enable — Stop mass deletions/raids"
                 ),
                 color=discord.Color.red()
             )
@@ -268,16 +266,16 @@ class SetupWizard(commands.Cog):
 
         elif step == 8:
             embed = discord.Embed(
-                title="Step 8️⃣ — Welcome & Community Features",
+                title="Step 8 — Welcome & Community Features",
                 description=(
-                    "👋 Make your server feel alive!\n\n"
-                    "**Welcome Messages:**\n"
-                    "`/welcome set-channel #welcome`\n"
-                    "`/welcome toggle enabled:On`\n\n"
-                    "**Suggestions:**\n"
-                    "`/suggestions set-channel #suggestions`\n\n"
-                    "**Leveling:**\n"
-                    "`/leveling toggle on` — Members earn XP for chatting!"
+                    "Make your server feel alive!\n\n"
+                    "Welcome Messages:\n"
+                    "/welcome set-channel #welcome\n"
+                    "/welcome toggle enabled:On\n\n"
+                    "Suggestions:\n"
+                    "/suggestions set-channel #suggestions\n\n"
+                    "Leveling:\n"
+                    "/leveling toggle on — Members earn XP for chatting!"
                 ),
                 color=discord.Color.green()
             )
@@ -287,13 +285,13 @@ class SetupWizard(commands.Cog):
                     self.step = 9
                     await self.update_content(interaction)
                 @discord.ui.button(label="➡️ Later", style=discord.ButtonStyle.secondary)
-                        async def skip8(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.step = 9
-        await self.update_content(interaction)
-    @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
-    async def back8(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.step = 7
-        await self.update_content(interaction)
+                async def skip8(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 9
+                    await self.update_content(interaction)
+                @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=1)
+                async def back8(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    self.step = 7
+                    await self.update_content(interaction)
             return embed, Step8View
 
         elif step == 9:
@@ -308,13 +306,13 @@ class SetupWizard(commands.Cog):
                     "✅ Ticket panel posted\n"
                     "✅ AutoMod & Anti-Nuke active\n"
                     "✅ Welcome messages set\n\n"
-                    "📖 **Need help later?** Just type `/help` or run `/wizard` again!\n\n"
-                    "💡 **Quick commands cheat sheet:**\n"
-                    "• `/ticket panel` → Post ticket buttons\n"
-                    "• `/warn @user reason` → Issue warning\n"
-                    "• `/automod enable` → Turn on protection\n"
-                    "• `/welcome toggle on` → Welcome messages\n"
-                    "• `/setup-server` → Auto-create roles & channels\n\n"
+                    "Need help later? Just type /help or run /wizard again!\n\n"
+                    "Quick commands cheat sheet:\n"
+                    "/ticket panel — Post ticket buttons\n"
+                    "/warn @user reason — Issue warning\n"
+                    "/automod enable — Turn on protection\n"
+                    "/welcome toggle on — Welcome messages\n"
+                    "/setup-server — Auto-create roles & channels\n\n"
                     "Enjoy using Teamy! 🚀"
                 ),
                 color=discord.Color.green()
@@ -323,7 +321,7 @@ class SetupWizard(commands.Cog):
                 @discord.ui.button(label="✅ Finish", style=discord.ButtonStyle.green)
                 async def finish(self, interaction: discord.Interaction, button: discord.ui.Button):
                     await interaction.response.edit_message(
-                        content="🎊 **All done!** Enjoy your fully set up server!",
+                        content="🎊 All done! Enjoy your fully set up server!",
                         embed=None,
                         view=None
                     )
@@ -341,7 +339,7 @@ class SetupWizard(commands.Cog):
             )
             return embed, None
 
-    @app_commands.command(name="wizard", description="🧙 Start the full server setup wizard")
+    @app_commands.command(name="wizard", description="Start the full server setup wizard")
     async def start_wizard(self, interaction: discord.Interaction):
         embed, ViewClass = await self.get_step_content(0, interaction.guild)
         view = ViewClass(self, step=0)
